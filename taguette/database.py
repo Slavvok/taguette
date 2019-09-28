@@ -19,6 +19,9 @@ from sqlalchemy.orm import column_property, deferred, relationship, \
 from sqlalchemy.sql import functions
 from sqlalchemy.types import DateTime, Enum, Integer, String, Text
 import sys
+import binascii
+import hashlib
+import hmac
 
 
 logger = logging.getLogger(__name__)
@@ -66,13 +69,38 @@ class User(Base):
     email_sent = Column(DateTime, nullable=True)
     projects = relationship('Project', secondary='project_members')
 
+    # def set_password(self, password, method='bcrypt'):
+    #     if method == 'bcrypt':
+    #         h = bcrypt.hashpw(password.encode('utf-8'),
+    #                           bcrypt.gensalt())
+    #         self.hashed_password = 'bcrypt:%s' % h.decode('utf-8')
+    #     else:
+    #         raise ValueError("Unsupported encryption method %r" % method)
+    #
+    # def check_password(self, password):
+    #     if self.hashed_password is None:
+    #         return False
+    #     elif self.hashed_password.startswith('bcrypt:'):
+    #         return bcrypt.checkpw(password.encode('utf-8'),
+    #                               self.hashed_password[7:].encode('utf-8'))
+    #     else:
+    #         logger.warning("Password uses unknown encryption method")
+    #         return False
+
     def set_password(self, password, method='bcrypt'):
         if method == 'bcrypt':
             h = bcrypt.hashpw(password.encode('utf-8'),
                               bcrypt.gensalt())
             self.hashed_password = 'bcrypt:%s' % h.decode('utf-8')
+        elif method == 'hashlib':
+            salt = binascii.hexlify(os.urandom(16))
+            h = hashlib.pbkdf2_hmac('sha256', password.encode(),
+                                    salt, 10000)
+            salt = salt.decode()
+            self.hashed_password = 'hashlib:%s%s%s' % (salt[:20], binascii.hexlify(h).decode(), salt[20:])
         else:
             raise ValueError("Unsupported encryption method %r" % method)
+        return self.hashed_password
 
     def check_password(self, password):
         if self.hashed_password is None:
@@ -80,8 +108,16 @@ class User(Base):
         elif self.hashed_password.startswith('bcrypt:'):
             return bcrypt.checkpw(password.encode('utf-8'),
                                   self.hashed_password[7:].encode('utf-8'))
+        elif self.hashed_password.startswith('hashlib:'):
+            hash_pw = self.hashed_password[8:][20:-12]
+            salt = self.hashed_password[8:][:20] + self.hashed_password[8:][-12:]
+            return hmac.compare_digest(
+                binascii.unhexlify(hash_pw.encode()),
+                hashlib.pbkdf2_hmac('sha256', password.encode(),
+                                    salt.encode(), 10000)
+            )
         else:
-            logger.warning("Password uses unknown encryption method")
+            # logger.warning("Password uses unknown encryption method")
             return False
 
 
